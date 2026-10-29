@@ -62,6 +62,10 @@ def parse_bool(v):
 def parse_args():
     parser = argparse.ArgumentParser(description="On-Policy Self-Distillation Training")
     
+    parser.add_argument("--research_mask", choices=["vanilla", "fork", "random"], default="vanilla")
+    parser.add_argument("--research_diagnostics", type=parse_bool, default=False)
+    parser.add_argument("--research_log_every", type=int, default=10)
+
     # Model arguments
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-7B-Instruct", help="Model name or path")
     parser.add_argument("--tokenizer_name", type=str, default=None, help="Tokenizer name (defaults to model_name)")
@@ -292,6 +296,9 @@ if __name__ == "__main__":
     
     # Build DistilConfig
     config_kwargs = {
+        "research_mask": args.research_mask,
+        "research_diagnostics": args.research_diagnostics,
+        "research_log_every": args.research_log_every,
         "seed": args.seed,
         "output_dir": args.output_dir,
         "run_name": args.run_name,

@@ -24,8 +24,24 @@ data/processed/
 .DS_Store
 
 # Internal validation (not part of the release)
-tests/
+# tests are tracked in this research fork
 
 # Local-only (cluster config, model symlinks)
 slurm/cluster_env.sh
 models
+
+# Team local assets / credentials
+.test-deps/
+runs/
+artifacts/
+data/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+.env
+.env.*
+*.pem
+*.key
+credentials*.json

@@ -942,3 +942,7 @@ class DistilConfig(TrainingArguments):
                 raise ValueError(
                     "splice_generation is incompatible with use_onpolicy_demos."
                 )
+    # Opt-in team research extensions; defaults preserve upstream behavior.
+    research_mask: str = field(default="vanilla")
+    research_diagnostics: bool = field(default=False)
+    research_log_every: int = field(default=10)

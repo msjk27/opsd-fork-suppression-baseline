@@ -2461,6 +2461,34 @@ class DistilTrainer(BaseTrainer):
                 token_type_ids=inputs.get("token_type_ids"),
             )
 
+        # Research extensions are completely bypassed with upstream defaults.
+        research_mode = getattr(self.args, "research_mask", "vanilla")
+        diagnostics = getattr(self.args, "research_diagnostics", False)
+        if research_mode != "vanilla" or diagnostics:
+            self._research_microstep = getattr(self, "_research_microstep", 0) + 1
+            from research.masking import loss_mask
+            with torch.no_grad():
+                teacher_top = teacher_all_logps.detach().amax(-1).float().exp()
+                student_top = all_logps.detach().amax(-1).float().exp()
+                original_loss_mask = loss_completion_mask
+                loss_completion_mask = loss_mask(
+                    loss_completion_mask, teacher_top, student_top, research_mode,
+                    self.args.seed + self._research_microstep * 100003 + self.accelerator.process_index,
+                )
+                every = max(1, getattr(self.args, "research_log_every", 10))
+                if diagnostics and self.state.global_step % every == 0:
+                    from research.signals import token_signals, write_positions
+                    from pathlib import Path
+                    self._research_call_id = getattr(self, "_research_call_id", 0) + 1
+                    signals = token_signals(all_logps.detach(), teacher_all_logps.detach(), completion_ids)
+                    signals["loss_eligible"] = original_loss_mask.detach().cpu()
+                    signals["loss_kept"] = loss_completion_mask.detach().cpu()
+                    write_positions(Path(self.args.output_dir) / "diagnostics" /
+                                    f"rank{self.accelerator.process_index}.jsonl",
+                                    signals, completion_mask, completion_ids,
+                                    {"step": self.state.global_step, "mask": research_mode,
+                                     "call_id": self._research_call_id, "rank": self.accelerator.process_index})
+
         if self.top_entropy_quantile < 1.0:
             entropy_mask = self.get_high_entropy_mask(entropies, loss_completion_mask, 1 - self.top_entropy_quantile)
         else:
@@ -2512,7 +2540,10 @@ class DistilTrainer(BaseTrainer):
 
         with torch.no_grad():
             kl_approx = (per_token_logps - teacher_per_token_logps) + torch.exp(teacher_per_token_logps - per_token_logps) - 1
-            kl_approx_mean = (kl_approx * loss_completion_mask).sum() / loss_completion_mask.sum()
+            kl_denominator = loss_completion_mask.sum()
+            if research_mode != "vanilla":
+                kl_denominator = kl_denominator.clamp(min=1.0)
+            kl_approx_mean = (kl_approx * loss_completion_mask).sum() / kl_denominator
         self._metrics[mode]["kl_approx"].append(self.accelerator.gather(kl_approx_mean).nanmean().item())
         
         loss_completion_token_count = loss_completion_mask.sum().clamp(min=1.0)

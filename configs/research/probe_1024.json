@@ -1,0 +1,16 @@
+{
+  "student": "models/Qwen3-1.7B",
+  "teacher": "models/Qwen3-1.7B",
+  "student_device": "cuda:0",
+  "teacher_device": "cuda:1",
+  "data": "data/raw/openthoughts_math_filtered_15k.parquet",
+  "output_dir": "runs/probe-base-1024-s42",
+  "seed": 42,
+  "limit": 16,
+  "samples": 1,
+  "max_tokens": 1024,
+  "max_prompt_length": 25000,
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "teacher_prompt_template": "{prompt}\n\nThis is an example for a response to the question:\n{gold_answer}\n\nNow answer with a response of your own, including the thinking process."
+}

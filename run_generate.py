@@ -34,6 +34,9 @@ def parse_args():
                         help="Enable thinking mode in chat template: 'true', 'false', or 'default' (model decides)")
 
     
+    parser.add_argument("--seed", type=int, default=None, help="Optional explicit vLLM seed")
+    parser.add_argument("--research_metrics", action="store_true", help="Save termination/length/cue metadata")
+
     # Sharding args
     parser.add_argument("--num_shards", type=int, default=1)
     parser.add_argument("--shard_id", type=int, default=0)
@@ -146,7 +149,8 @@ def main():
                 tensor_parallel_size=args.num_gpus,
                 dtype="bfloat16",
                 gpu_memory_utilization=0.9,
-                trust_remote_code=True
+                trust_remote_code=True,
+                **({"seed": args.seed} if args.seed is not None else {})
             )
             
             # Gemma 4 uses special tokens (<|channel>, <channel|>) for thinking —
@@ -232,6 +236,16 @@ def main():
                                 "response": resp_text,
                                 "model_name": args.model_name,
                             }
+
+                            if args.research_metrics:
+                                from research.metrics import response_metrics
+                                eos_ids = tokenizer.eos_token_id
+                                eos_ids = eos_ids if isinstance(eos_ids, list) else [eos_ids]
+                                standard_fields.update(response_metrics(
+                                    list(output_obj.token_ids), resp_text, eos_ids,
+                                    args.max_tokens, tokenizer))
+                                standard_fields.update(sample_id=k, seed=args.seed,
+                                                       finish_reason=output_obj.finish_reason)
 
                             if handler.grading_mode() == "inline":
                                 gold = handler.get_gold(item["raw_item"])
