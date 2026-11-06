@@ -148,6 +148,16 @@ python -m research.analyze --graded runs/base-eval-aime24-1024-s42/aime24-temp_0
 
 기존 4k graded JSONL은 `research.analyze --graded` 입력으로 그대로 사용할 수 있습니다. token IDs/termination metadata가 없던 과거 파일은 EOS/cap-hit을 정확히 복원할 수 없습니다. 긴 rollout의 prefix를 잘라 채점하는 `run_budget_sweep.py`는 cap별 독립 generation과 구별해야 합니다.
 
+## 학습된 모델 내려받기 (Vanilla OPSD, seed 42)
+
+8× RTX 3090에서 재현한 vanilla OPSD 모델(Qwen3-1.7B, 234 step, bf16)은 GitHub Release `model-opsd-vanilla-s42`로 배포합니다. 가중치는 2 GB 미만 shard 2개입니다.
+
+```bash
+bash download_model.sh   # → models/qwen3-1.7b-opsd-vanilla-s42 (3.4 GB, sha256 검증 포함)
+```
+
+이후 `--model_name models/qwen3-1.7b-opsd-vanilla-s42`처럼 Base 모델 대신 경로만 바꾸면 위 평가 명령을 그대로 쓸 수 있습니다. `transformers`의 `from_pretrained`나 `vllm serve`로도 바로 로드됩니다. 이 모델은 성능 향상 모델이 아니라 **비교 기준(baseline)** 입니다. 결과는 avg@16(38,912 tokens) 기준 Base 0.362 → OPSD 0.319이고, 자세한 내용은 [PLAN.md](PLAN.md)와 release의 `README.md`·`eval_results.txt`를 참고하세요. fp32 가중치와 optimizer state(재개용 step 100/200/234 체크포인트)는 학습 서버의 `/mnt/SSD3/mssuk/opsd/runs/vanilla-3090-s42/checkpoint`에만 있습니다.
+
 ## 팀원 4명의 확장 규칙
 
 공유 main은 baseline으로 유지하고 개인 branch에서 `research/` 모듈과 `configs/research/<owner>_<method>.json`을 추가합니다. 예: 1명은 paired fork 진단, 1명은 loss mitigation, 1명은 decoding/길이 분석, 1명은 evaluation/재현성 검증을 맡을 수 있습니다. 새 methodology는 config의 명시적 opt-in과 CPU test를 함께 추가하고 Vanilla loss/gradient 호환성 test를 통과해야 합니다. 비교마다 Base/Vanilla/Fork/동일 비율 Random을 포함하고 기존 결과를 덮어쓰지 않습니다. GitHub collaborator 초대는 팀원 계정을 받은 뒤 별도로 진행합니다.
