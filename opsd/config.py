@@ -946,3 +946,5 @@ class DistilConfig(TrainingArguments):
     research_mask: str = field(default="vanilla")
     research_diagnostics: bool = field(default=False)
     research_log_every: int = field(default=10)
+    chunked_loss: bool = field(default=False)
+    chunked_loss_size: int = field(default=512)

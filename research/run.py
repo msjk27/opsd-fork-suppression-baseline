@@ -44,6 +44,12 @@ def load_config(path):
     return c
 
 
+def freeze():
+    """pip-freeze-style package list; works in uv venvs that ship without pip."""
+    from importlib.metadata import distributions
+    return ''.join(sorted(f"{d.metadata['Name']}=={d.version}\n" for d in distributions()))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config', required=True)
@@ -75,7 +81,7 @@ def main():
                 'git_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
                 'git_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], text=True)),
                 'dataset_sha256': sha256(c['train']['train_file_path']),
-                'environment': subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True)}
+                'environment': freeze()}
     # Only allowlisted environment is recorded; credentials are never captured.
     manifest['cuda_visible_devices'] = os.environ.get('CUDA_VISIBLE_DEVICES')
     (run/'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')

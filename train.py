@@ -65,6 +65,9 @@ def parse_args():
     parser.add_argument("--research_mask", choices=["vanilla", "fork", "random"], default="vanilla")
     parser.add_argument("--research_diagnostics", type=parse_bool, default=False)
     parser.add_argument("--research_log_every", type=int, default=10)
+    parser.add_argument("--chunked_loss", type=parse_bool, default=False,
+                        help="Compute the JSD loss in completion chunks (same math, bounded memory)")
+    parser.add_argument("--chunked_loss_size", type=int, default=512)
 
     # Model arguments
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-7B-Instruct", help="Model name or path")
@@ -299,6 +302,8 @@ if __name__ == "__main__":
         "research_mask": args.research_mask,
         "research_diagnostics": args.research_diagnostics,
         "research_log_every": args.research_log_every,
+        "chunked_loss": args.chunked_loss,
+        "chunked_loss_size": args.chunked_loss_size,
         "seed": args.seed,
         "output_dir": args.output_dir,
         "run_name": args.run_name,

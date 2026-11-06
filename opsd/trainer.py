@@ -2406,7 +2406,76 @@ class DistilTrainer(BaseTrainer):
             raise ValueError("The DistilTrainer does not support returning outputs")
         return self._compute_loss(model, inputs)
 
+    def _completion_logits(self, model, input_ids, attention_mask, logits_to_keep):
+        """Raw logits for the completion positions (same slicing as _get_per_token_logps_and_entropies)."""
+        model_inputs = {"input_ids": input_ids, "attention_mask": attention_mask, "use_cache": False}
+        if "logits_to_keep" in self.model_kwarg_keys:
+            model_inputs["logits_to_keep"] = logits_to_keep + 1
+        logits = model(**model_inputs).logits[:, :-1, :]
+        return logits[:, -logits_to_keep:, :]
+
+    def _compute_loss_chunked(self, model, inputs):
+        """Vanilla OPSD loss with bounded memory; numerically equivalent to the unchunked path."""
+        from .chunked_loss import chunked_jsd
+
+        unsupported = []
+        if getattr(self.args, "research_mask", "vanilla") != "vanilla":
+            unsupported.append("research_mask")
+        if getattr(self.args, "research_diagnostics", False):
+            unsupported.append("research_diagnostics")
+        if self.top_entropy_quantile < 1.0:
+            unsupported.append("top_entropy_quantile")
+        if self.beta != 0.0:
+            unsupported.append("beta")
+        if any(inputs.get(k) is not None for k in ("pixel_values", "image_grid_thw", "token_type_ids")):
+            unsupported.append("multimodal inputs")
+        if unsupported:
+            raise ValueError(f"chunked_loss does not support: {', '.join(unsupported)}")
+
+        prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
+        completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]
+        teacher_prompt_ids, teacher_prompt_mask = inputs["teacher_prompt_ids"], inputs["teacher_prompt_mask"]
+
+        loss_completion_mask = completion_mask
+        if self.num_loss_tokens_to_skip > 0:
+            batch_size, seq_len = completion_mask.shape
+            token_positions = torch.arange(seq_len, device=completion_mask.device).unsqueeze(0).expand(batch_size, -1)
+            loss_completion_mask = completion_mask * (token_positions >= self.num_loss_tokens_to_skip).int()
+
+        logits_to_keep = completion_ids.size(1)
+        student_logits = self._completion_logits(
+            model, torch.cat([prompt_ids, completion_ids], 1), torch.cat([prompt_mask, completion_mask], 1),
+            logits_to_keep)
+        with torch.no_grad():
+            teacher_logits = self._completion_logits(
+                self.ref_model, torch.cat([teacher_prompt_ids, completion_ids], 1),
+                torch.cat([teacher_prompt_mask, completion_mask], 1), logits_to_keep)
+        teacher_temperature = self.teacher_temperature if self.teacher_temperature is not None else self.temperature
+        per_token_loss, per_token_logps, teacher_per_token_logps, entropies = chunked_jsd(
+            student_logits, teacher_logits, completion_ids, self.alpha, self.temperature, teacher_temperature,
+            chunk=getattr(self.args, "chunked_loss_size", 512))
+        del teacher_logits
+
+        if self.use_vllm and self.vllm_importance_sampling_correction and not self.generate_from_teacher:
+            ratio = inputs["importance_sampling_ratio"]
+            importance_weights = (ratio * loss_completion_mask).sum(-1) / loss_completion_mask.sum(-1).clamp(min=1.0)
+            per_token_loss = per_token_loss * importance_weights.unsqueeze(-1)
+
+        loss = ((per_token_loss * loss_completion_mask).sum(-1) / loss_completion_mask.sum(-1).clamp(min=1.0)).mean()
+        loss = loss / self.current_gradient_accumulation_steps
+
+        mode = "train" if self.model.training else "eval"
+        with torch.no_grad():
+            kl_approx = (per_token_logps - teacher_per_token_logps) + torch.exp(teacher_per_token_logps - per_token_logps) - 1
+            kl_approx_mean = (kl_approx * loss_completion_mask).sum() / loss_completion_mask.sum()
+            mean_entropy = (entropies * loss_completion_mask).sum() / loss_completion_mask.sum().clamp(min=1.0)
+        self._metrics[mode]["kl_approx"].append(self.accelerator.gather(kl_approx_mean).nanmean().item())
+        self._metrics[mode]["entropy"].append(self.accelerator.gather(mean_entropy).nanmean().item())
+        return loss
+
     def _compute_loss(self, model, inputs):
+        if getattr(self.args, "chunked_loss", False):
+            return self._compute_loss_chunked(model, inputs)
         # Compute the per-token log probabilities for the model
         prompt_ids, prompt_mask = inputs["prompt_ids"], inputs["prompt_mask"]
         completion_ids, completion_mask = inputs["completion_ids"], inputs["completion_mask"]

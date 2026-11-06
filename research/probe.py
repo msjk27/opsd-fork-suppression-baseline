@@ -7,6 +7,27 @@ import json
 from pathlib import Path
 
 
+def last_boxed(text):
+    """Content of the last balanced \\boxed{...} in text, or None."""
+    start = text.rfind('\\boxed{')
+    if start < 0:
+        return None
+    i, depth = start + len('\\boxed{'), 1
+    for j in range(i, len(text)):
+        depth += {'{': 1, '}': -1}.get(text[j], 0)
+        if depth == 0:
+            return text[i:j]
+    return None
+
+
+def sparse_answer(row, source):
+    """Answer-only privileged context. 'answer' = dataset column (27% truncated in OpenThoughts 15k);
+    'solution_boxed' = last \\boxed{} of the gold solution, falling back to the column."""
+    if source == 'solution_boxed':
+        return last_boxed(row['solution']) or row['Answer']
+    return row['Answer']
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config', default='configs/research/probe_1024.json')
@@ -72,7 +93,8 @@ def main():
             with (out/'responses.jsonl').open('a', encoding='utf-8') as f:
                 f.write(json.dumps(record)+'\n')
             s = score(student, ids, completion)
-            for condition, gold in [('base', None), ('sparse', row['Answer']), ('dense', row['solution'])]:
+            sparse = sparse_answer(row, c.get('sparse_answer_source', 'answer'))
+            for condition, gold in [('base', None), ('sparse', sparse), ('dense', row['solution'])]:
                 teacher_ids = prompt(text if gold is None else c['teacher_prompt_template'].format(prompt=text, gold_answer=gold))
                 t = score(teacher, teacher_ids, completion)
                 signals = token_signals(s, t, completion)
