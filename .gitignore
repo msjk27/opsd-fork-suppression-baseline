@@ -45,3 +45,7 @@ data/
 *.pem
 *.key
 credentials*.json
+
+# Server-local symlinks to /mnt/SSD3 (the dir patterns above do not match symlinks)
+/data
+/runs
