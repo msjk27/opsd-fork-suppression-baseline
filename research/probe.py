@@ -77,7 +77,8 @@ def main():
                            logits_to_keep=completion.shape[1]+1).logits[:, :-1]
             return logits.float().log_softmax(-1).cpu()
 
-    for qid, row in enumerate(rows.select(range(min(c['limit'], len(rows))))):
+    start = c.get('start', 0)  # shard offset; question_id stays the global row index
+    for qid, row in enumerate(rows.select(range(start, min(start + c['limit'], len(rows)))), start=start):
         text = row['problem']
         ids = prompt(text)
         for sample_id in range(c['samples']):
