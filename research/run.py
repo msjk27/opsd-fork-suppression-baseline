@@ -33,8 +33,13 @@ def load_config(path):
     unknown = set(args) - flags
     if unknown:
         raise ValueError(f'Unknown train.py flags: {unknown}')
-    if args.get('research_mask', 'vanilla') not in ('vanilla', 'fork', 'random'):
+    mask = args.get('research_mask', 'vanilla')
+    if mask not in ('vanilla', 'fork', 'random', 'decision', 'decision_matched', 'decision_random'):
         raise ValueError('Invalid masking method')
+    if mask.startswith('decision') and not args.get('chunked_loss'):
+        raise ValueError('Decision masks are implemented for chunked_loss only')
+    if bool(args.get('chunked_loss')) and mask in ('fork', 'random'):
+        raise ValueError('fork/random masks are not supported with chunked_loss')
     if args['enable_thinking'] != 'true' or args['sync_ref_model'] is not False:
         raise ValueError('Team baseline requires ON/ON and frozen teacher')
     if c['gpus'] * args['per_device_train_batch_size'] * args['gradient_accumulation_steps'] != 64:

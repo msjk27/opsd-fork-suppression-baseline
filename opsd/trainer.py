@@ -2414,12 +2414,31 @@ class DistilTrainer(BaseTrainer):
         logits = model(**model_inputs).logits[:, :-1, :]
         return logits[:, -logits_to_keep:, :]
 
+    def _decision_loss_mask(self, completion_ids, valid, per_token_loss, research_mode):
+        """E6 loss mask for this batch (research.masking), with its effect logged as mask/* metrics."""
+        from research.evalio import CLOSE, paragraph_ids
+        from research.masking import decision_mask, token_lookup
+
+        if getattr(self, "_paragraph_lookup", None) is None:
+            tokenizer = self.processing_class
+            self._paragraph_lookup = token_lookup(paragraph_ids(tokenizer), len(tokenizer), completion_ids.device)
+            self._think_close_id = tokenizer.convert_tokens_to_ids(CLOSE)
+        self._research_microstep = getattr(self, "_research_microstep", 0) + 1
+        seed = self.args.seed + self._research_microstep * 100003 + self.accelerator.process_index
+        kept_mask, stats = decision_mask(completion_ids, valid, self._paragraph_lookup, self._think_close_id,
+                                         research_mode, per_token_loss, seed)
+        metrics = self._metrics["train" if self.model.training else "eval"]
+        for name, value in stats.items():
+            metrics[f"mask/{name}"].append(self.accelerator.gather(value).nanmean().item())
+        return kept_mask
+
     def _compute_loss_chunked(self, model, inputs):
-        """Vanilla OPSD loss with bounded memory; numerically equivalent to the unchunked path."""
+        """OPSD loss with bounded memory; for vanilla, numerically equivalent to the unchunked path."""
         from .chunked_loss import chunked_jsd
 
+        research_mode = getattr(self.args, "research_mask", "vanilla")
         unsupported = []
-        if getattr(self.args, "research_mask", "vanilla") != "vanilla":
+        if research_mode != "vanilla" and not research_mode.startswith("decision"):
             unsupported.append("research_mask")
         if getattr(self.args, "research_diagnostics", False):
             unsupported.append("research_diagnostics")
@@ -2456,12 +2475,18 @@ class DistilTrainer(BaseTrainer):
             chunk=getattr(self.args, "chunked_loss_size", 512))
         del teacher_logits
 
+        # E6 masks only which tokens enter the loss average. The importance weight of the rollout and the logged
+        # metrics below keep using every eligible token, so all arms stay comparable with vanilla training.
+        kept_mask = loss_completion_mask
+        if research_mode != "vanilla":
+            kept_mask = self._decision_loss_mask(completion_ids, loss_completion_mask, per_token_loss, research_mode)
+
         if self.use_vllm and self.vllm_importance_sampling_correction and not self.generate_from_teacher:
             ratio = inputs["importance_sampling_ratio"]
             importance_weights = (ratio * loss_completion_mask).sum(-1) / loss_completion_mask.sum(-1).clamp(min=1.0)
             per_token_loss = per_token_loss * importance_weights.unsqueeze(-1)
 
-        loss = ((per_token_loss * loss_completion_mask).sum(-1) / loss_completion_mask.sum(-1).clamp(min=1.0)).mean()
+        loss = ((per_token_loss * kept_mask).sum(-1) / kept_mask.sum(-1).clamp(min=1.0)).mean()
         loss = loss / self.current_gradient_accumulation_steps
 
         mode = "train" if self.model.training else "eval"

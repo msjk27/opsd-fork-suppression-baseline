@@ -62,7 +62,9 @@ def parse_bool(v):
 def parse_args():
     parser = argparse.ArgumentParser(description="On-Policy Self-Distillation Training")
     
-    parser.add_argument("--research_mask", choices=["vanilla", "fork", "random"], default="vanilla")
+    parser.add_argument("--research_mask", default="vanilla",
+                        choices=["vanilla", "fork", "random", "decision", "decision_matched", "decision_random"],
+                        help="Loss-only token mask; the decision* modes (E6) require --chunked_loss true")
     parser.add_argument("--research_diagnostics", type=parse_bool, default=False)
     parser.add_argument("--research_log_every", type=int, default=10)
     parser.add_argument("--chunked_loss", type=parse_bool, default=False,
@@ -455,6 +457,8 @@ if __name__ == "__main__":
     
     if trainer.accelerator.is_main_process:
         tokenizer.save_pretrained(args.output_dir)
+        # The training log survives runs that keep no intermediate checkpoints (save_strategy "no").
+        trainer.state.save_to_json(os.path.join(args.output_dir, "trainer_state.json"))
         logging.info(f"Model and tokenizer saved to {args.output_dir}")
     
     trainer.accelerator.wait_for_everyone()

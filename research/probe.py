@@ -8,15 +8,21 @@ from pathlib import Path
 
 
 def last_boxed(text):
-    """Content of the last balanced \\boxed{...} in text, or None."""
+    """Content of the last balanced \\boxed{...} in text, or None. Escaped braces (\\{ \\}) are literal
+    characters: they do not open or close a group (\\left\\{ ... \\right. is common in solutions)."""
     start = text.rfind('\\boxed{')
     if start < 0:
         return None
-    i, depth = start + len('\\boxed{'), 1
-    for j in range(i, len(text)):
+    i = j = start + len('\\boxed{')
+    depth = 1
+    while j < len(text):
+        if text[j] == '\\':
+            j += 2
+            continue
         depth += {'{': 1, '}': -1}.get(text[j], 0)
         if depth == 0:
             return text[i:j]
+        j += 1
     return None
 
 

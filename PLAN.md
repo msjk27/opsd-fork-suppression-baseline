@@ -50,18 +50,42 @@ There are 32 OpenThoughts training prompts, with one 4096-token rollout each. Th
 - **Magnitude doesn't:** the change is about 1 point here, against 4.8 in the paper for 4B. Unlike the paper's monotonic pattern, the answer-only context changes it more than the full solution.
 - **After OPSD training, the student's own rollouts have fewer forks** (14.2 → 12.9% under the unprivileged teacher) **and more locks** (70.3 → 71.6%), consistent with the student absorbing the teacher's fork suppression.
 
-## 4. Deviations from the paper's setup (all deliberate and recorded)
+## 4. Deviations from the paper's setup
 
-| Item | Paper | Here | Why |
-|---|---|---|---|
-| Hardware | 8× H100 80 GB | 8× RTX 3090 24 GB | Available hardware |
-| JSD loss computation | Full-vocab tensors | Chunked (512 positions) | The full-vocab version runs out of memory on 24 GB. Same math: loss identical, gradients within the bf16 noise floor ([bench/check_chunked_loss.py](bench/check_chunked_loss.py)). |
-| vLLM memory share | 0.15 (repo config) | 0.40 | 0.15 leaves about 0.4 GB of KV cache on 24 GB |
-| Everything else | Full FT, LR 5e-6, batch 64, 15k prompts, 4k cap, α=0.5, frozen teacher, 1 epoch, seed 42 | Same | Config: [configs/research/vanilla_4096_3090.json](configs/research/vanilla_4096_3090.json) |
-| Answer-only diagnostic context | `Answer` column | Last `\boxed{}` of the solution | 27% of `Answer` values in the 15k set are truncated (e.g. `\dfrac{85`) |
-| Diagnostic model | Qwen3-4B | Qwen3-1.7B | Matches the trained model |
+There are two training runs:
 
-Single seed (42) for training. Eval and diagnostic sampling seeds were not fixed.
+- **Run A:** `vanilla-3090-s42`, config [configs/research/vanilla_4096_3090.json](configs/research/vanilla_4096_3090.json). Sections 1–3 report this run. Where the paper's Table 9 and the authors' scripts disagree, this run followed the scripts.
+- **Run B:** `vanilla-3090-paper-s42`, config [configs/research/vanilla_4096_3090_paper.json](configs/research/vanilla_4096_3090_paper.json). It follows the paper's Table 9 instead.
+
+The only deviations left in Run B are hardware workarounds that do not change the math.
+
+| Item | Paper | Run A | Run B | Why |
+|---|---|---|---|---|
+| Hardware | 8× H100 80 GB | 8× RTX 3090 24 GB | 8× RTX 3090 24 GB | Available hardware |
+| JSD loss computation | Full-vocab tensors | Chunked (512 positions) | Chunked (512 positions) | The full-vocab version runs out of memory on 24 GB. Same math: the loss is identical and gradients agree within the bf16 noise floor ([bench/check_chunked_loss.py](bench/check_chunked_loss.py)). |
+| vLLM memory share | Not stated (authors' config: 0.15) | 0.40 | 0.40 | 0.15 leaves about 0.4 GB of KV cache on 24 GB. Affects only rollout speed. |
+| Warmup ratio | 0.1 (Table 9) | **0.03** | 0.1 | Run A used the authors' default ([slurm/config.sh:25](slurm/config.sh#L25)), which contradicts Table 9. |
+| Training rollout top-k | None (T 1.0, top-p 1.0) | **50** | None | Run A used the authors' default ([slurm/train.sh:56](slurm/train.sh#L56)), which Table 9 does not list. |
+| Batch size | 64 | 64 = 8 GPUs × 1 × 8 accumulation | 64 = 8 GPUs × 1 × 8 accumulation | The authors' script requests 4 GPUs, which with its defaults gives a batch of 32. We follow the paper. The loss is a per-sequence mean ([opsd/trainer.py:2463](opsd/trainer.py#L2463)), so how the batch is split across GPUs does not change it. |
+| Everything else | Full FT, LR 5e-6, 15k prompts, 4k cap, α=0.5, frozen teacher, 1 epoch, seed 42 | Same as paper | Same as paper | |
+| Answer-only diagnostic context | `Answer` column | Last `\boxed{}` of the solution | Not run | 27% of `Answer` values in the 15k set are truncated (e.g. `\dfrac{85`) |
+| Diagnostic model | Qwen3-4B | Qwen3-1.7B | Not run | Matches the trained model |
+
+Each run used a single training seed (42), so run-to-run noise has not been measured. Eval and diagnostic sampling seeds were not fixed.
+
+**Effect of the warmup and top-k fixes.** Run B degrades less than Run A. The table shows avg@16 under the section 1 protocol, with Δ from a paired bootstrap over the 90 problems.
+
+| Comparison | avg@16 | Δ | 95% CI | Problems worse / better |
+|---|---|---|---|---|
+| Run A vs base | 0.319 vs 0.362 | −0.043 | [−0.067, −0.020] | 36 / 10 |
+| Run B vs base | 0.338 vs 0.362 | −0.024 | [−0.049, +0.001] | 27 / 14 |
+| Run B vs Run A | 0.338 vs 0.319 | +0.019 | [+0.001, +0.038] | 13 / 28 |
+
+Per benchmark, Run B scores 0.458 on AIME24, 0.346 on AIME25 and 0.210 on HMMT25. Its responses are still about 25% shorter than base, and its self-correction rate falls by about as much as Run A's.
+
+The Run B drop's interval just reaches zero. Whether the 1.9-point gap between Run A and Run B is larger than seed-to-seed noise will not be known until a second training seed is run.
+
+Full numbers are in `/mnt/SSD3/mssuk/opsd/runs/comparison_base_vs_opsd_paper.txt`, produced by [research/compare_evals.py](research/compare_evals.py).
 
 ## 5. Proposed next steps (need your decision)
 
