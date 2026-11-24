@@ -1,6 +1,6 @@
 # OPSD degradation on Qwen3-1.7B (thinking): reproduction results and next steps
 
-Status: **Phase 2a (reproduction) complete, 2026-11-06 03:48.** Fork-aware variants have not been started.
+Status: **Phase 2a (reproduction) complete, 2026-11-06 03:48.** E6 (decision-position mask) complete 2026-11-20, see section 7. E5 (teacher-context ablations) is paused.
 Paper: Kaur et al., arXiv 2607.05184, "Rethinking OPSD for Thinking Models".
 
 ## 1. Headline: the OPSD degradation reproduces
@@ -97,3 +97,21 @@ Full numbers are in `/mnt/SSD3/mssuk/opsd/runs/comparison_base_vs_opsd_paper.txt
 - Runs: `/mnt/SSD3/mssuk/opsd/runs/` (`base/eval`, `vanilla-3090-s42/{checkpoint,eval}`, `probe-{base,opsd}-4096-s42`). The repo `runs/` folder is a symlink to it.
 - Comparison numbers: `/mnt/SSD3/mssuk/opsd/runs/comparison_base_vs_opsd.txt`
 - Environment: `/mnt/SSD3/mssuk/opsd/venv`. Scripts: `/mnt/SSD3/mssuk/opsd/scripts/` (pipeline, work-queue eval, progress).
+
+## 7. E6 result: masking the decision positions does not prevent the degradation (2026-11-20)
+
+Full write-up: [docs/e6_results.md](docs/e6_results.md). Pre-registration: [docs/e5e6_preregistration.md](docs/e5e6_preregistration.md).
+
+The experiment excluded paragraph starts inside the thinking from the loss. These are the positions where the model chooses between going on, self-correcting and committing to an answer. Three arms were trained, with 48 eval rollouts per problem:
+
+| arm | acc | − base |
+|---|---|---|
+| base | 0.364 | — |
+| e6-decision | 0.324 | −0.040 [−0.060, −0.020] |
+| e6-matched (same token count and loss share, elsewhere) | 0.322 | −0.042 |
+| e6-random (same token count, elsewhere) | 0.318 | −0.047 |
+
+- **Primary endpoint:** decision − matched = +0.002 [−0.010, +0.016].
+- **The mask blocked only 1–12% of the learned decision shift.** The decision arm still learned 88–99% of the shift (less Wait, earlier commit), which spreads from training on the other ~98% of tokens.
+- **Position masks are not a fix.** Because the shift was never actually blocked, E6 cannot say whether the shift causes the accuracy loss.
+- **One seed.**
